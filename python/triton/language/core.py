@@ -2275,6 +2275,7 @@ def reshape(input, *shape, can_reorder=False, _semantic=None, _generator=None):
         reshape(x, 32, 32)
     """
     shape = _shape_check_impl(_unwrap_iterable(shape))
+    can_reorder = _unwrap_if_constexpr(can_reorder)
     if len(shape) == 0:
         return _unsplat(input, _semantic=_semantic, _generator=_generator)
     return _semantic.reshape(input, shape, can_reorder)
