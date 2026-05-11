@@ -1014,7 +1014,8 @@ class ScanOps(ReduceScanOpInterface):
         new_input = []
         if self.reverse:
             for arg in input:
-                new_input.append(self.to_tensor(np.flip(arg.handle.data, axis=self.axis), arg.dtype))
+                new_input.append(self.to_tensor(np.ascontiguousarray(np.flip(arg.handle.data, axis=self.axis)),
+                                                arg.dtype))
         else:
             new_input = input
         if self.combine_fn == tl.standard._sum_combine:
@@ -1026,7 +1027,7 @@ class ScanOps(ReduceScanOpInterface):
             ret = self.generic_scan(new_input)
         if self.reverse:
             for arg in ret:
-                arg.handle.data = np.flip(arg.handle.data, axis=self.axis)
+                arg.handle.data = np.ascontiguousarray(np.flip(arg.handle.data, axis=self.axis))
         return ret
 
 
