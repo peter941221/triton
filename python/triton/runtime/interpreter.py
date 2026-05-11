@@ -97,7 +97,7 @@ class TensorDescHandle:
             masks = masks & (0 <= off) & (off < self.shape[dim].data)
         assert ptrs_data.dtype == np.uint64
         ptrs_handle = TensorHandle(ptrs_data, self.base.dtype.scalar)
-        return ptrs_handle, masks
+        return ptrs_handle, TensorHandle(masks, tl.int1)
 
 
 @dataclass(frozen=True)

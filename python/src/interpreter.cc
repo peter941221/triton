@@ -574,6 +574,11 @@ PyArrayObject *require_ndarray(const py::object &obj) {
   return reinterpret_cast<PyArrayObject *>(obj.ptr());
 }
 
+py::object array_dtype(PyArrayObject *arr) {
+  return py::borrow<py::object>(
+      reinterpret_cast<PyObject *>(PyArray_DESCR(arr)));
+}
+
 bool numpy_dtypes_equal(const py::object &a, const py::object &b) {
   py::module_ np = py::module_::import_("numpy");
   py::object da = np.attr("dtype")(a);
@@ -761,14 +766,14 @@ void init_triton_interpreter(py::module_ &m) {
         py::module_ np = py::module_::import_("numpy");
         std::memory_order order = mem_semantic_map[sem];
         PyArrayObject *ptr_arr = require_ndarray(ptr_obj);
-        require_ndarray(val_obj);
+        PyArrayObject *val_arr = require_ndarray(val_obj);
         require_ndarray(mask_obj);
 
         npy_intp numel = PyArray_SIZE(ptr_arr);
         int ndim = PyArray_NDIM(ptr_arr);
         npy_intp *dims = PyArray_DIMS(ptr_arr);
 
-        py::object ret_dtype_obj = np.attr("dtype")(val_obj);
+        py::object ret_dtype_obj = array_dtype(val_arr);
         py::object ret = np.attr("empty")(py::make_tuple(numel), ret_dtype_obj);
         PyArrayObject *ret_arr = require_ndarray(ret);
 
@@ -833,7 +838,7 @@ void init_triton_interpreter(py::module_ &m) {
         int ndim = PyArray_NDIM(ptr_arr);
         npy_intp *dims = PyArray_DIMS(ptr_arr);
 
-        py::object ret_dtype_obj = np.attr("dtype")(cmp_obj);
+        py::object ret_dtype_obj = array_dtype(cmp_arr);
         py::object ret = np.attr("empty")(py::make_tuple(numel), ret_dtype_obj);
         PyArrayObject *ret_arr = require_ndarray(ret);
 
