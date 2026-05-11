@@ -3407,6 +3407,7 @@ def device_print(prefix, *args, hex=False, _semantic=None):
     '''
     import string
     prefix = _unwrap_if_constexpr(prefix)
+    hex = _unwrap_if_constexpr(hex)
     assert isinstance(prefix, str), f"{prefix} is not string"
     b_ascii = True
     for ch in prefix:
