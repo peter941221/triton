@@ -585,6 +585,11 @@ py::object numpy_empty(size_t numel, py::handle dtype) {
   return np.attr("empty")(py::make_tuple(numel), dtype);
 }
 
+AnyArray contiguous_array(py::handle array) {
+  py::module_ np = py::module_::import_("numpy");
+  return py::cast<AnyArray>(np.attr("ascontiguousarray")(array));
+}
+
 char *element_data(const AnyArray1D &array, size_t i) {
   std::ptrdiff_t offset = static_cast<std::ptrdiff_t>(i) *
                           static_cast<std::ptrdiff_t>(array.stride(0)) *
@@ -708,8 +713,11 @@ void init_triton_interpreter(py::module_ &m) {
       .export_values();
 
   m.def("load",
-        [](AnyArray ptr, AnyArray mask, AnyArray other,
+        [](py::object ptr_obj, py::object mask_obj, py::object other_obj,
            py::object ret_dtype_obj) -> py::object {
+          AnyArray ptr = contiguous_array(ptr_obj);
+          AnyArray mask = contiguous_array(mask_obj);
+          AnyArray other = contiguous_array(other_obj);
           require_dtype<uint64_t>(ptr, "ptr");
           require_dtype<bool>(mask, "mask");
           size_t numel = ptr.size();
@@ -732,27 +740,34 @@ void init_triton_interpreter(py::module_ &m) {
           return ret.attr("reshape")(shape_list(ptr));
         });
 
-  m.def("store", [](AnyArray ptr, AnyArray value, AnyArray mask) {
-    require_dtype<uint64_t>(ptr, "ptr");
-    require_dtype<bool>(mask, "mask");
-    size_t numel = ptr.size();
-    auto reshaped_ptr = py::cast<AnyArray1D>(reshape(ptr, numel));
-    auto reshaped_mask = py::cast<AnyArray1D>(reshape(mask, numel));
-    auto reshaped_value = py::cast<AnyArray1D>(reshape(value, numel));
-    size_t itemsize = value.itemsize();
-    std::vector<uint64_t> ptr_data = copy_uint64_array(reshaped_ptr);
-    std::vector<uint8_t> mask_data = copy_bool_array(reshaped_mask);
+  m.def("store",
+        [](py::object ptr_obj, py::object value_obj, py::object mask_obj) {
+          AnyArray ptr = contiguous_array(ptr_obj);
+          AnyArray value = contiguous_array(value_obj);
+          AnyArray mask = contiguous_array(mask_obj);
+          require_dtype<uint64_t>(ptr, "ptr");
+          require_dtype<bool>(mask, "mask");
+          size_t numel = ptr.size();
+          auto reshaped_ptr = py::cast<AnyArray1D>(reshape(ptr, numel));
+          auto reshaped_mask = py::cast<AnyArray1D>(reshape(mask, numel));
+          auto reshaped_value = py::cast<AnyArray1D>(reshape(value, numel));
+          size_t itemsize = value.itemsize();
+          std::vector<uint64_t> ptr_data = copy_uint64_array(reshaped_ptr);
+          std::vector<uint8_t> mask_data = copy_bool_array(reshaped_mask);
 
-    for (size_t i = 0; i < numel; ++i) {
-      if (mask_data[i])
-        memcpy(reinterpret_cast<void *>(ptr_data[i]),
-               const_element_data(reshaped_value, i), itemsize);
-    }
-  });
+          for (size_t i = 0; i < numel; ++i) {
+            if (mask_data[i])
+              memcpy(reinterpret_cast<void *>(ptr_data[i]),
+                     const_element_data(reshaped_value, i), itemsize);
+          }
+        });
 
   m.def("atomic_rmw",
-        [](RMWOp rmw_op, AnyArray ptr, AnyArray val, AnyArray mask,
-           MemSemantic sem) -> py::object {
+        [](RMWOp rmw_op, py::object ptr_obj, py::object val_obj,
+           py::object mask_obj, MemSemantic sem) -> py::object {
+          AnyArray ptr = contiguous_array(ptr_obj);
+          AnyArray val = contiguous_array(val_obj);
+          AnyArray mask = contiguous_array(mask_obj);
           require_dtype<uint64_t>(ptr, "ptr");
           require_dtype<bool>(mask, "mask");
           std::memory_order order = mem_semantic_map[sem];
@@ -801,8 +816,11 @@ void init_triton_interpreter(py::module_ &m) {
         });
 
   m.def("atomic_cas",
-        [](AnyArray ptr, AnyArray cmp, AnyArray val,
+        [](py::object ptr_obj, py::object cmp_obj, py::object val_obj,
            MemSemantic sem) -> py::object {
+          AnyArray ptr = contiguous_array(ptr_obj);
+          AnyArray cmp = contiguous_array(cmp_obj);
+          AnyArray val = contiguous_array(val_obj);
           require_dtype<uint64_t>(ptr, "ptr");
           std::memory_order order = mem_semantic_map[sem];
           size_t numel = ptr.size();
