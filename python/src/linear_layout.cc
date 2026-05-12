@@ -19,14 +19,19 @@ using LinearLayout = mlir::triton::LinearLayout;
 namespace {
 
 mlir::MLIRContext *getLinearLayoutContext() {
-  static PyObject *ctxObject = []() {
-    py::module_ irMod = py::module_::import_("triton._C.libtriton.ir");
-    // Keep the Python object alive for the life of the process without running
-    // its destructor during interpreter shutdown (avoids segfaults).
-    py::object ctx = irMod.attr("context")();
-    return ctx.release().ptr();
-  }();
-  return py::cast<mlir::MLIRContext *>(py::handle(ctxObject));
+  // Process-lifetime singleton: LinearLayout objects hold attributes uniqued in
+  // this context, so the context must outlive every Python LinearLayout object.
+  // We also deliberately avoid running its destructor during interpreter
+  // shutdown (to avoid segfaults).
+  //
+  // Do not create this via triton._C.libtriton.ir.context and release the
+  // Python object. That still intentionally keeps the context alive, but it
+  // also leaves a nanobind-owned instance registered at interpreter shutdown,
+  // which reports leaked ir.context/types/functions. Keeping only the raw C++
+  // context avoids leaking a Python/nanobind object.
+  static auto *ctx =
+      new mlir::MLIRContext(mlir::MLIRContext::Threading::DISABLED);
+  return ctx;
 }
 
 } // namespace
