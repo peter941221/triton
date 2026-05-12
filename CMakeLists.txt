@@ -328,21 +328,7 @@ if(TRITON_BUILD_PYTHON_MODULE)
     set(Python_INTERPRETER_ID "${Python3_INTERPRETER_ID}")
   endif()
 
-  find_package(nanobind CONFIG QUIET)
-  if(NOT nanobind_FOUND AND NOT nanobind_DIR AND NOT nanobind_ROOT)
-    execute_process(
-      COMMAND ${Python3_EXECUTABLE} -c "import nanobind; print(nanobind.cmake_dir())"
-      OUTPUT_VARIABLE TRITON_NANOBIND_CMAKE_DIR
-      OUTPUT_STRIP_TRAILING_WHITESPACE
-      RESULT_VARIABLE TRITON_NANOBIND_CMAKE_RESULT
-    )
-    if(TRITON_NANOBIND_CMAKE_RESULT EQUAL "0")
-      set(nanobind_DIR "${TRITON_NANOBIND_CMAKE_DIR}" CACHE PATH "Path to nanobind CMake config" FORCE)
-    endif()
-  endif()
-  if(NOT nanobind_FOUND)
-    find_package(nanobind CONFIG REQUIRED)
-  endif()
+  find_package(nanobind CONFIG REQUIRED HINTS "${Python3_SITELIB}")
   nanobind_build_library(nanobind-static)
   target_link_libraries(nanobind-static PRIVATE Python3::Module)
 
