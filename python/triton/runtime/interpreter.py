@@ -130,12 +130,6 @@ def _validate_np_data_size(np_array, tl_dtype):
     return True
 
 
-def _contiguous_data(data):
-    if data.flags.c_contiguous:
-        return data
-    return np.array(data, copy=True, order="C")
-
-
 def _get_signed_np_dtype(dtype):
     if dtype == np.uint8:
         return np.int8
@@ -432,13 +426,11 @@ class InterpreterBuilder:
         dtype_np = _get_np_dtype(dtype_tt)
         if other is None:
             other = TensorHandle(np.zeros_like(ptrs.data, dtype=dtype_np), dtype_tt)
-        ret = _interpreter.load(_contiguous_data(ptrs.data), _contiguous_data(mask.data),
-                                _contiguous_data(other.data), dtype_np)
+        ret = _interpreter.load(ptrs.data, mask.data, other.data, dtype_np)
         return TensorHandle(ret, dtype_tt)
 
     def create_masked_store(self, ptrs, value, mask, cache_modifier, eviction_policy):
-        return _interpreter.store(_contiguous_data(ptrs.data), _contiguous_data(value.data),
-                                  _contiguous_data(mask.data))
+        return _interpreter.store(ptrs.data, value.data, mask.data)
 
     # casting ops
     def cast_impl(self, src, dst_type):
@@ -668,8 +660,7 @@ class InterpreterBuilder:
 
     def create_split(self, val):
         # Triton only supports splitting the original tensor into two along the last axis
-        return (TensorHandle(_contiguous_data(val.data[..., 0]), val.dtype.scalar),
-                TensorHandle(_contiguous_data(val.data[..., 1]), val.dtype.scalar))
+        return (TensorHandle(val.data[..., 0], val.dtype.scalar), TensorHandle(val.data[..., 1], val.dtype.scalar))
 
     def create_splat(self, ret_ty, arg):
         shape = ret_ty.shape
@@ -685,9 +676,7 @@ class InterpreterBuilder:
         if sem not in self.ir_sem_to_interpreter_sem:
             raise ValueError(f"unsupported semantic {sem}")
         sem = self.ir_sem_to_interpreter_sem[sem]
-        return TensorHandle(
-            _interpreter.atomic_cas(_contiguous_data(ptr.data), _contiguous_data(cmp.data),
-                                    _contiguous_data(val.data), sem), cmp.dtype.scalar)
+        return TensorHandle(_interpreter.atomic_cas(ptr.data, cmp.data, val.data, sem), cmp.dtype.scalar)
 
     def create_atomic_rmw(self, rmwOp, ptr, val, mask, sem, scope):
         if rmwOp not in self.ir_rmw_op_to_interpreter_rmw_op:
@@ -696,9 +685,7 @@ class InterpreterBuilder:
             raise ValueError(f"unsupported semantic {sem}")
         rmwOp = self.ir_rmw_op_to_interpreter_rmw_op[rmwOp]
         sem = self.ir_sem_to_interpreter_sem[sem]
-        return TensorHandle(
-            _interpreter.atomic_rmw(rmwOp, _contiguous_data(ptr.data), _contiguous_data(val.data),
-                                    _contiguous_data(mask.data), sem), val.dtype.scalar)
+        return TensorHandle(_interpreter.atomic_rmw(rmwOp, ptr.data, val.data, mask.data, sem), val.dtype.scalar)
 
     def create_extern_elementwise(self, libName, libPath, symbol, argList, retType, isPure):
         raise NotImplementedError("extern_elementwise not supported in interpreter mode")
