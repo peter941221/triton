@@ -445,17 +445,6 @@ if(TRITON_BUILD_PYTHON_MODULE)
                   ${PYTHON_SRC_PATH}/llvm.cc
                   ${PYTHON_SRC_PATH}/specialize.cc)
 
-  execute_process(
-    COMMAND ${Python3_EXECUTABLE} -c "import numpy; print(numpy.get_include())"
-    OUTPUT_VARIABLE TRITON_NUMPY_INCLUDE_DIR
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-    RESULT_VARIABLE TRITON_NUMPY_INCLUDE_RESULT
-  )
-  if(NOT TRITON_NUMPY_INCLUDE_RESULT EQUAL "0")
-    message(FATAL_ERROR "Failed to locate NumPy headers (import numpy). Install NumPy in the build Python environment.")
-  endif()
-  target_include_directories(triton PRIVATE ${TRITON_NUMPY_INCLUDE_DIR})
-
   # Link triton with its dependencies
   target_link_libraries(triton PRIVATE ${TRITON_LIBRARIES})
 
