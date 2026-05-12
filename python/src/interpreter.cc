@@ -565,10 +565,6 @@ private:
 
 using AnyArray = py::ndarray<py::numpy>;
 using AnyArray1D = py::ndarray<py::numpy, py::ndim<1>>;
-using BoolArray = py::ndarray<bool, py::numpy>;
-using BoolArray1D = py::ndarray<bool, py::numpy, py::ndim<1>>;
-using UInt64Array = py::ndarray<uint64_t, py::numpy>;
-using UInt64Array1D = py::ndarray<uint64_t, py::numpy, py::ndim<1>>;
 using ByteStorage = std::vector<uint64_t>;
 
 template <typename... Args>
@@ -600,20 +596,6 @@ const char *const_element_data(const AnyArray1D &array, size_t i) {
   return element_data(array, i);
 }
 
-std::vector<uint64_t> copy_uint64_array(const UInt64Array1D &array) {
-  std::vector<uint64_t> data(array.size());
-  for (size_t i = 0; i < array.size(); ++i)
-    data[i] = array(i);
-  return data;
-}
-
-std::vector<uint8_t> copy_bool_array(const BoolArray1D &array) {
-  std::vector<uint8_t> data(array.size());
-  for (size_t i = 0; i < array.size(); ++i)
-    data[i] = array(i);
-  return data;
-}
-
 ByteStorage copy_bytes(const AnyArray1D &array) {
   size_t itemsize = array.itemsize();
   size_t byte_size = array.size() * itemsize;
@@ -636,6 +618,26 @@ template <typename T> bool dtype_matches(const py::dlpack::dtype &dtype) {
   } else {
     return dtype == py::dtype<T>();
   }
+}
+
+template <typename T>
+void require_dtype(const AnyArray &array, const char *name) {
+  if (!dtype_matches<T>(array.dtype()))
+    throw std::invalid_argument(std::string(name) + " has unsupported dtype");
+}
+
+std::vector<uint64_t> copy_uint64_array(const AnyArray1D &array) {
+  std::vector<uint64_t> data(array.size());
+  for (size_t i = 0; i < array.size(); ++i)
+    memcpy(&data[i], const_element_data(array, i), sizeof(uint64_t));
+  return data;
+}
+
+std::vector<uint8_t> copy_bool_array(const AnyArray1D &array) {
+  std::vector<uint8_t> data(array.size());
+  for (size_t i = 0; i < array.size(); ++i)
+    data[i] = *reinterpret_cast<const bool *>(const_element_data(array, i));
+  return data;
 }
 
 // This is a workaround because explicit template parameter list for lambdas is
@@ -706,48 +708,58 @@ void init_triton_interpreter(py::module_ &m) {
       .export_values();
 
   m.def("load",
-        [](UInt64Array ptr, BoolArray mask, AnyArray other,
+        [](AnyArray ptr, AnyArray mask, AnyArray other,
            py::object ret_dtype_obj) -> py::object {
+          require_dtype<uint64_t>(ptr, "ptr");
+          require_dtype<bool>(mask, "mask");
           size_t numel = ptr.size();
           py::object ret = numpy_empty(numel, ret_dtype_obj);
-          auto reshaped_ptr = py::cast<UInt64Array1D>(reshape(ptr, numel));
-          auto reshaped_mask = py::cast<BoolArray1D>(reshape(mask, numel));
+          auto reshaped_ptr = py::cast<AnyArray1D>(reshape(ptr, numel));
+          auto reshaped_mask = py::cast<AnyArray1D>(reshape(mask, numel));
           auto reshaped_others = py::cast<AnyArray1D>(reshape(other, numel));
           auto reshaped_ret = py::cast<AnyArray1D>(ret);
           size_t itemsize = reshaped_ret.itemsize();
+          std::vector<uint64_t> ptr_data = copy_uint64_array(reshaped_ptr);
+          std::vector<uint8_t> mask_data = copy_bool_array(reshaped_mask);
 
           for (size_t i = 0; i < numel; ++i) {
             void *dest = element_data(reshaped_ret, i);
-            if (reshaped_mask(i))
-              memcpy(dest, reinterpret_cast<void *>(reshaped_ptr(i)), itemsize);
+            if (mask_data[i])
+              memcpy(dest, reinterpret_cast<void *>(ptr_data[i]), itemsize);
             else
               memcpy(dest, const_element_data(reshaped_others, i), itemsize);
           }
           return ret.attr("reshape")(shape_list(ptr));
         });
 
-  m.def("store", [](UInt64Array ptr, AnyArray value, BoolArray mask) {
+  m.def("store", [](AnyArray ptr, AnyArray value, AnyArray mask) {
+    require_dtype<uint64_t>(ptr, "ptr");
+    require_dtype<bool>(mask, "mask");
     size_t numel = ptr.size();
-    auto reshaped_ptr = py::cast<UInt64Array1D>(reshape(ptr, numel));
-    auto reshaped_mask = py::cast<BoolArray1D>(reshape(mask, numel));
+    auto reshaped_ptr = py::cast<AnyArray1D>(reshape(ptr, numel));
+    auto reshaped_mask = py::cast<AnyArray1D>(reshape(mask, numel));
     auto reshaped_value = py::cast<AnyArray1D>(reshape(value, numel));
     size_t itemsize = value.itemsize();
+    std::vector<uint64_t> ptr_data = copy_uint64_array(reshaped_ptr);
+    std::vector<uint8_t> mask_data = copy_bool_array(reshaped_mask);
 
     for (size_t i = 0; i < numel; ++i) {
-      if (reshaped_mask(i))
-        memcpy(reinterpret_cast<void *>(reshaped_ptr(i)),
+      if (mask_data[i])
+        memcpy(reinterpret_cast<void *>(ptr_data[i]),
                const_element_data(reshaped_value, i), itemsize);
     }
   });
 
   m.def("atomic_rmw",
-        [](RMWOp rmw_op, UInt64Array ptr, AnyArray val, BoolArray mask,
+        [](RMWOp rmw_op, AnyArray ptr, AnyArray val, AnyArray mask,
            MemSemantic sem) -> py::object {
+          require_dtype<uint64_t>(ptr, "ptr");
+          require_dtype<bool>(mask, "mask");
           std::memory_order order = mem_semantic_map[sem];
           size_t numel = ptr.size();
           py::object ret = numpy_empty(numel, val.cast().attr("dtype"));
-          auto reshaped_ptr = py::cast<UInt64Array1D>(reshape(ptr, numel));
-          auto reshaped_mask = py::cast<BoolArray1D>(reshape(mask, numel));
+          auto reshaped_ptr = py::cast<AnyArray1D>(reshape(ptr, numel));
+          auto reshaped_mask = py::cast<AnyArray1D>(reshape(mask, numel));
           auto reshaped_val = py::cast<AnyArray1D>(reshape(val, numel));
           auto reshaped_ret = py::cast<AnyArray1D>(ret);
 
@@ -789,12 +801,13 @@ void init_triton_interpreter(py::module_ &m) {
         });
 
   m.def("atomic_cas",
-        [](UInt64Array ptr, AnyArray cmp, AnyArray val,
+        [](AnyArray ptr, AnyArray cmp, AnyArray val,
            MemSemantic sem) -> py::object {
+          require_dtype<uint64_t>(ptr, "ptr");
           std::memory_order order = mem_semantic_map[sem];
           size_t numel = ptr.size();
           py::object ret = numpy_empty(numel, cmp.cast().attr("dtype"));
-          auto reshaped_ptr = py::cast<UInt64Array1D>(reshape(ptr, numel));
+          auto reshaped_ptr = py::cast<AnyArray1D>(reshape(ptr, numel));
           auto reshaped_cmp = py::cast<AnyArray1D>(reshape(cmp, numel));
           auto reshaped_val = py::cast<AnyArray1D>(reshape(val, numel));
           auto reshaped_ret = py::cast<AnyArray1D>(ret);
