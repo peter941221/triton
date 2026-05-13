@@ -564,8 +564,8 @@ private:
   size_t itemsize;
 };
 
-using AnyArray = py::ndarray<py::numpy>;
-using AnyArray1D = py::ndarray<py::numpy, py::ndim<1>>;
+using AnyArray = py::ndarray<py::numpy, py::ro>;
+using MutableArray = py::ndarray<py::numpy>;
 using ByteStorage = std::vector<uint64_t>;
 
 template <typename... Args>
@@ -576,38 +576,36 @@ py::list shape_list(const py::ndarray<Args...> &array) {
   return shape;
 }
 
-template <typename... Args>
-py::object reshape(py::ndarray<Args...> array, size_t numel) {
-  return array.cast().attr("reshape")(py::make_tuple(numel));
-}
-
 py::object numpy_empty(size_t numel, py::handle dtype) {
   py::module_ np = py::module_::import_("numpy");
   return np.attr("empty")(py::make_tuple(numel), dtype);
 }
 
-AnyArray contiguous_array(py::handle array) {
-  // Keep pybind11-era behavior for interpreter inputs. py::array_t accepted
-  // many NumPy-like inputs and strided views before the binding body ran; with
-  // nanobind, accept py::object and normalize explicitly so memoryviews and
-  // non-contiguous arrays are still handled uniformly.
-  py::module_ np = py::module_::import_("numpy");
-  return py::cast<AnyArray>(np.attr("ascontiguousarray")(array));
+template <typename... Args>
+std::ptrdiff_t element_byte_offset(const py::ndarray<Args...> &array,
+                                   size_t i) {
+  std::ptrdiff_t offset = 0;
+  for (size_t dim = array.ndim(); dim > 0; --dim) {
+    size_t axis = dim - 1;
+    size_t extent = array.shape(axis);
+    size_t index = extent == 0 ? 0 : i % extent;
+    i = extent == 0 ? 0 : i / extent;
+    offset += static_cast<std::ptrdiff_t>(index) *
+              static_cast<std::ptrdiff_t>(array.stride(axis));
+  }
+  return offset * static_cast<std::ptrdiff_t>(array.itemsize());
 }
 
-char *element_data(const AnyArray1D &array, size_t i) {
-  // nanobind ndarray strides are element strides, not byte strides.
-  std::ptrdiff_t offset = static_cast<std::ptrdiff_t>(i) *
-                          static_cast<std::ptrdiff_t>(array.stride(0)) *
-                          static_cast<std::ptrdiff_t>(array.itemsize());
-  return static_cast<char *>(array.data()) + offset;
+char *element_data(const MutableArray &array, size_t i) {
+  return static_cast<char *>(array.data()) + element_byte_offset(array, i);
 }
 
-const char *const_element_data(const AnyArray1D &array, size_t i) {
-  return element_data(array, i);
+const char *const_element_data(const AnyArray &array, size_t i) {
+  return static_cast<const char *>(array.data()) +
+         element_byte_offset(array, i);
 }
 
-ByteStorage copy_bytes(const AnyArray1D &array) {
+ByteStorage copy_bytes(const AnyArray &array) {
   // Atomic helpers cast value storage to typed pointers, so copy through
   // uint64_t-backed storage to keep the temporary buffer suitably aligned.
   size_t itemsize = array.itemsize();
@@ -641,16 +639,14 @@ void require_dtype(const AnyArray &array, const char *name) {
     throw std::invalid_argument(std::string(name) + " has unsupported dtype");
 }
 
-std::vector<uint64_t> copy_uint64_array(const AnyArray1D &array) {
-  // Do not assume reshaped ndarray storage is directly indexable as uint64_t*:
-  // element_data() preserves the array stride semantics after normalization.
+std::vector<uint64_t> copy_uint64_array(const AnyArray &array) {
   std::vector<uint64_t> data(array.size());
   for (size_t i = 0; i < array.size(); ++i)
     memcpy(&data[i], const_element_data(array, i), sizeof(uint64_t));
   return data;
 }
 
-std::vector<uint8_t> copy_bool_array(const AnyArray1D &array) {
+std::vector<uint8_t> copy_bool_array(const AnyArray &array) {
   // Use byte storage instead of vector<bool> so atomic helpers can take a
   // stable pointer to mask values.
   std::vector<uint8_t> data(array.size());
@@ -729,73 +725,64 @@ void init_triton_interpreter(py::module_ &m) {
   m.def("load",
         [](py::object ptr_obj, py::object mask_obj, py::object other_obj,
            py::object ret_dtype_obj) -> py::object {
-          AnyArray ptr = contiguous_array(ptr_obj);
-          AnyArray mask = contiguous_array(mask_obj);
-          AnyArray other = contiguous_array(other_obj);
+          AnyArray ptr = py::cast<AnyArray>(ptr_obj);
+          AnyArray mask = py::cast<AnyArray>(mask_obj);
+          AnyArray other = py::cast<AnyArray>(other_obj);
           require_dtype<uint64_t>(ptr, "ptr");
           require_dtype<bool>(mask, "mask");
           size_t numel = ptr.size();
           py::object ret = numpy_empty(numel, ret_dtype_obj);
-          auto reshaped_ptr = py::cast<AnyArray1D>(reshape(ptr, numel));
-          auto reshaped_mask = py::cast<AnyArray1D>(reshape(mask, numel));
-          auto reshaped_others = py::cast<AnyArray1D>(reshape(other, numel));
-          auto reshaped_ret = py::cast<AnyArray1D>(ret);
-          size_t itemsize = reshaped_ret.itemsize();
-          std::vector<uint64_t> ptr_data = copy_uint64_array(reshaped_ptr);
-          std::vector<uint8_t> mask_data = copy_bool_array(reshaped_mask);
+          auto ret_array = py::cast<MutableArray>(ret);
+          size_t itemsize = ret_array.itemsize();
+          std::vector<uint64_t> ptr_data = copy_uint64_array(ptr);
+          std::vector<uint8_t> mask_data = copy_bool_array(mask);
 
           for (size_t i = 0; i < numel; ++i) {
-            void *dest = element_data(reshaped_ret, i);
+            void *dest = element_data(ret_array, i);
             if (mask_data[i])
               memcpy(dest, reinterpret_cast<void *>(ptr_data[i]), itemsize);
             else
-              memcpy(dest, const_element_data(reshaped_others, i), itemsize);
+              memcpy(dest, const_element_data(other, i), itemsize);
           }
           return ret.attr("reshape")(shape_list(ptr));
         });
 
   m.def("store",
         [](py::object ptr_obj, py::object value_obj, py::object mask_obj) {
-          AnyArray ptr = contiguous_array(ptr_obj);
-          AnyArray value = contiguous_array(value_obj);
-          AnyArray mask = contiguous_array(mask_obj);
+          AnyArray ptr = py::cast<AnyArray>(ptr_obj);
+          AnyArray value = py::cast<AnyArray>(value_obj);
+          AnyArray mask = py::cast<AnyArray>(mask_obj);
           require_dtype<uint64_t>(ptr, "ptr");
           require_dtype<bool>(mask, "mask");
           size_t numel = ptr.size();
-          auto reshaped_ptr = py::cast<AnyArray1D>(reshape(ptr, numel));
-          auto reshaped_mask = py::cast<AnyArray1D>(reshape(mask, numel));
-          auto reshaped_value = py::cast<AnyArray1D>(reshape(value, numel));
           size_t itemsize = value.itemsize();
-          std::vector<uint64_t> ptr_data = copy_uint64_array(reshaped_ptr);
-          std::vector<uint8_t> mask_data = copy_bool_array(reshaped_mask);
+          std::vector<uint64_t> ptr_data = copy_uint64_array(ptr);
+          std::vector<uint8_t> mask_data = copy_bool_array(mask);
 
           for (size_t i = 0; i < numel; ++i) {
             if (mask_data[i])
               memcpy(reinterpret_cast<void *>(ptr_data[i]),
-                     const_element_data(reshaped_value, i), itemsize);
+                     const_element_data(value, i), itemsize);
           }
         });
 
   m.def("atomic_rmw",
         [](RMWOp rmw_op, py::object ptr_obj, py::object val_obj,
            py::object mask_obj, MemSemantic sem) -> py::object {
-          AnyArray ptr = contiguous_array(ptr_obj);
-          AnyArray val = contiguous_array(val_obj);
-          AnyArray mask = contiguous_array(mask_obj);
+          AnyArray ptr = py::cast<AnyArray>(ptr_obj);
+          AnyArray val = py::cast<AnyArray>(val_obj);
+          AnyArray mask = py::cast<AnyArray>(mask_obj);
           require_dtype<uint64_t>(ptr, "ptr");
           require_dtype<bool>(mask, "mask");
           std::memory_order order = mem_semantic_map[sem];
           size_t numel = ptr.size();
           py::object ret = numpy_empty(numel, val.cast().attr("dtype"));
-          auto reshaped_ptr = py::cast<AnyArray1D>(reshape(ptr, numel));
-          auto reshaped_mask = py::cast<AnyArray1D>(reshape(mask, numel));
-          auto reshaped_val = py::cast<AnyArray1D>(reshape(val, numel));
-          auto reshaped_ret = py::cast<AnyArray1D>(ret);
+          auto ret_array = py::cast<MutableArray>(ret);
 
-          std::vector<uint64_t> ptr_data = copy_uint64_array(reshaped_ptr);
-          std::vector<uint8_t> mask_data = copy_bool_array(reshaped_mask);
-          ByteStorage val_data = copy_bytes(reshaped_val);
-          auto *ret_data = static_cast<void *>(reshaped_ret.data());
+          std::vector<uint64_t> ptr_data = copy_uint64_array(ptr);
+          std::vector<uint8_t> mask_data = copy_bool_array(mask);
+          ByteStorage val_data = copy_bytes(val);
+          auto *ret_data = static_cast<void *>(ret_array.data());
           auto ret_dtype = val.dtype();
 
           std::unique_ptr<AtomicOp> atomic_op;
@@ -832,26 +819,23 @@ void init_triton_interpreter(py::module_ &m) {
   m.def("atomic_cas",
         [](py::object ptr_obj, py::object cmp_obj, py::object val_obj,
            MemSemantic sem) -> py::object {
-          AnyArray ptr = contiguous_array(ptr_obj);
-          AnyArray cmp = contiguous_array(cmp_obj);
-          AnyArray val = contiguous_array(val_obj);
+          AnyArray ptr = py::cast<AnyArray>(ptr_obj);
+          AnyArray cmp = py::cast<AnyArray>(cmp_obj);
+          AnyArray val = py::cast<AnyArray>(val_obj);
           require_dtype<uint64_t>(ptr, "ptr");
           std::memory_order order = mem_semantic_map[sem];
           size_t numel = ptr.size();
           py::object ret = numpy_empty(numel, cmp.cast().attr("dtype"));
-          auto reshaped_ptr = py::cast<AnyArray1D>(reshape(ptr, numel));
-          auto reshaped_cmp = py::cast<AnyArray1D>(reshape(cmp, numel));
-          auto reshaped_val = py::cast<AnyArray1D>(reshape(val, numel));
-          auto reshaped_ret = py::cast<AnyArray1D>(ret);
+          auto ret_array = py::cast<MutableArray>(ret);
 
           size_t itemsize = cmp.itemsize();
           for (size_t i = 0; i < numel; ++i)
-            memcpy(element_data(reshaped_ret, i),
-                   const_element_data(reshaped_cmp, i), itemsize);
+            memcpy(element_data(ret_array, i), const_element_data(cmp, i),
+                   itemsize);
 
-          std::vector<uint64_t> ptr_data = copy_uint64_array(reshaped_ptr);
-          ByteStorage val_data = copy_bytes(reshaped_val);
-          AtomicCASOp(ptr_data.data(), reshaped_ret.data(), val_data.data(),
+          std::vector<uint64_t> ptr_data = copy_uint64_array(ptr);
+          ByteStorage val_data = copy_bytes(val);
+          AtomicCASOp(ptr_data.data(), ret_array.data(), val_data.data(),
                       itemsize, numel, order)
               .apply();
 
