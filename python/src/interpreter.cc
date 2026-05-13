@@ -21,6 +21,7 @@ namespace py = nanobind;
 
 namespace {
 
+// Bit-compatible half storage used by the interpreter's atomic fadd path.
 struct triton_half {
   uint16_t value;
 };
@@ -586,11 +587,16 @@ py::object numpy_empty(size_t numel, py::handle dtype) {
 }
 
 AnyArray contiguous_array(py::handle array) {
+  // Keep pybind11-era behavior for interpreter inputs. py::array_t accepted
+  // many NumPy-like inputs and strided views before the binding body ran; with
+  // nanobind, accept py::object and normalize explicitly so memoryviews and
+  // non-contiguous arrays are still handled uniformly.
   py::module_ np = py::module_::import_("numpy");
   return py::cast<AnyArray>(np.attr("ascontiguousarray")(array));
 }
 
 char *element_data(const AnyArray1D &array, size_t i) {
+  // nanobind ndarray strides are element strides, not byte strides.
   std::ptrdiff_t offset = static_cast<std::ptrdiff_t>(i) *
                           static_cast<std::ptrdiff_t>(array.stride(0)) *
                           static_cast<std::ptrdiff_t>(array.itemsize());
@@ -602,6 +608,8 @@ const char *const_element_data(const AnyArray1D &array, size_t i) {
 }
 
 ByteStorage copy_bytes(const AnyArray1D &array) {
+  // Atomic helpers cast value storage to typed pointers, so copy through
+  // uint64_t-backed storage to keep the temporary buffer suitably aligned.
   size_t itemsize = array.itemsize();
   size_t byte_size = array.size() * itemsize;
   ByteStorage data((byte_size + sizeof(uint64_t) - 1) / sizeof(uint64_t));
@@ -618,6 +626,8 @@ bool dtype_matches(const py::dlpack::dtype &dtype, py::dlpack::dtype_code code,
 }
 
 template <typename T> bool dtype_matches(const py::dlpack::dtype &dtype) {
+  // nanobind exposes ndarray dtype through DLPack metadata. Match float16
+  // manually so the local triton_half storage still accepts NumPy float16.
   if constexpr (std::is_same_v<T, triton_half>) {
     return dtype_matches(dtype, py::dlpack::dtype_code::Float, 16);
   } else {
@@ -632,6 +642,8 @@ void require_dtype(const AnyArray &array, const char *name) {
 }
 
 std::vector<uint64_t> copy_uint64_array(const AnyArray1D &array) {
+  // Do not assume reshaped ndarray storage is directly indexable as uint64_t*:
+  // element_data() preserves the array stride semantics after normalization.
   std::vector<uint64_t> data(array.size());
   for (size_t i = 0; i < array.size(); ++i)
     memcpy(&data[i], const_element_data(array, i), sizeof(uint64_t));
@@ -639,6 +651,8 @@ std::vector<uint64_t> copy_uint64_array(const AnyArray1D &array) {
 }
 
 std::vector<uint8_t> copy_bool_array(const AnyArray1D &array) {
+  // Use byte storage instead of vector<bool> so atomic helpers can take a
+  // stable pointer to mask values.
   std::vector<uint8_t> data(array.size());
   for (size_t i = 0; i < array.size(); ++i)
     data[i] = *reinterpret_cast<const bool *>(const_element_data(array, i));
