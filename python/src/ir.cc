@@ -792,20 +792,23 @@ void init_triton_ir(py::module_ &m) {
       },
       ret::move);
 
-  m.def("deduce_scale_factor",
-        [](Value &lhs, std::optional<Value> &lhsScale,
-           ScaleDotElemType lhsFormat, bool lhsKPack, Value &rhs,
-           std::optional<Value> &rhsScale, ScaleDotElemType rhsFormat,
-           bool rhsKPack) -> int32_t {
-          int32_t scaleFactor = 0;
-          std::string errMsg;
-          if (failed(DotScaledOp::deduceScaleFactor(
-                  lhs, lhsScale.value_or(Value()), lhsFormat, lhsKPack, rhs,
-                  rhsScale.value_or(Value()), rhsFormat, rhsKPack, scaleFactor,
-                  errMsg)))
-            throw std::runtime_error(errMsg);
-          return scaleFactor;
-        });
+  m.def(
+      "deduce_scale_factor",
+      [](Value &lhs, std::optional<Value> &lhsScale, ScaleDotElemType lhsFormat,
+         bool lhsKPack, Value &rhs, std::optional<Value> &rhsScale,
+         ScaleDotElemType rhsFormat, bool rhsKPack) -> int32_t {
+        int32_t scaleFactor = 0;
+        std::string errMsg;
+        if (failed(DotScaledOp::deduceScaleFactor(
+                lhs, lhsScale.value_or(Value()), lhsFormat, lhsKPack, rhs,
+                rhsScale.value_or(Value()), rhsFormat, rhsKPack, scaleFactor,
+                errMsg)))
+          throw std::runtime_error(errMsg);
+        return scaleFactor;
+      },
+      py::arg("lhs"), py::arg("lhsScale").none(), py::arg("lhsFormat"),
+      py::arg("lhsKPack"), py::arg("rhs"), py::arg("rhsScale").none(),
+      py::arg("rhsFormat"), py::arg("rhsKPack"));
 
   py::class_<FuncOp, OpState>(m, "function")
       // .def_prop_ro("attrs", &ir::function::attrs)
@@ -1097,7 +1100,7 @@ void init_triton_ir(py::module_ &m) {
               return NameLoc::get(nameAttr, *childLoc);
             return NameLoc::get(nameAttr);
           },
-          py::arg("name"), py::arg("child_loc") = py::none())
+          py::arg("name"), (py::arg("child_loc").none() = py::none()))
       .def("set_loc",
            [](TritonOpBuilder &self, const std::string &fileName, int line,
               int column) { self.setLastLoc(fileName, line, column); })
@@ -1105,24 +1108,27 @@ void init_triton_ir(py::module_ &m) {
            [](TritonOpBuilder &self) -> Location { return self.getLastLoc(); })
 
       // Ops
-      .def("get_or_insert_function",
-           [](TritonOpBuilder &self, ModuleOp &module, std::string &funcName,
-              Type &funcType, std::string &visibility,
-              std::optional<bool> noinline) -> FuncOp {
-             if (Operation *funcOperation = module.lookupSymbol(funcName))
-               return llvm::dyn_cast<FuncOp>(funcOperation);
-             if (auto funcTy = dyn_cast<FunctionType>(funcType)) {
-               llvm::SmallVector<NamedAttribute> attrs = {
-                   NamedAttribute(
-                       self.getBuilder().getStringAttr("sym_visibility"),
-                       self.getBuilder().getStringAttr(visibility)),
-                   NamedAttribute(self.getBuilder().getStringAttr("noinline"),
-                                  self.getBuilder().getBoolAttr(
-                                      noinline.value_or(false)))};
-               return self.create<FuncOp>(funcName, funcTy, attrs);
-             }
-             throw std::invalid_argument("invalid function type");
-           })
+      .def(
+          "get_or_insert_function",
+          [](TritonOpBuilder &self, ModuleOp &module, std::string &funcName,
+             Type &funcType, std::string &visibility,
+             std::optional<bool> noinline) -> FuncOp {
+            if (Operation *funcOperation = module.lookupSymbol(funcName))
+              return llvm::dyn_cast<FuncOp>(funcOperation);
+            if (auto funcTy = dyn_cast<FunctionType>(funcType)) {
+              llvm::SmallVector<NamedAttribute> attrs = {
+                  NamedAttribute(
+                      self.getBuilder().getStringAttr("sym_visibility"),
+                      self.getBuilder().getStringAttr(visibility)),
+                  NamedAttribute(
+                      self.getBuilder().getStringAttr("noinline"),
+                      self.getBuilder().getBoolAttr(noinline.value_or(false)))};
+              return self.create<FuncOp>(funcName, funcTy, attrs);
+            }
+            throw std::invalid_argument("invalid function type");
+          },
+          py::arg("module"), py::arg("func_name"), py::arg("func_type"),
+          py::arg("visibility"), py::arg("noinline").none())
       .def(
           "create_block",
           [](TritonOpBuilder &self) -> Block * {
@@ -1197,17 +1203,19 @@ void init_triton_ir(py::module_ &m) {
       // Cast instructions
       // Conversions for custom FP types (FP8 and non-standard rounding
       // modes)
-      .def("create_fp_to_fp",
-           [](TritonOpBuilder &self, Value &src, Type &dstType,
-              std::optional<RoundingMode> roundingMode) -> Value {
-             if (roundingMode.has_value())
-               return self.create<FpToFpOp>(
-                   dstType, src,
-                   RoundingModeAttr::get(self.getBuilder().getContext(),
-                                         roundingMode.value()));
-             else
-               return self.create<FpToFpOp>(dstType, src);
-           })
+      .def(
+          "create_fp_to_fp",
+          [](TritonOpBuilder &self, Value &src, Type &dstType,
+             std::optional<RoundingMode> roundingMode) -> Value {
+            if (roundingMode.has_value())
+              return self.create<FpToFpOp>(
+                  dstType, src,
+                  RoundingModeAttr::get(self.getBuilder().getContext(),
+                                        roundingMode.value()));
+            else
+              return self.create<FpToFpOp>(dstType, src);
+          },
+          py::arg("src"), py::arg("dstType"), py::arg("roundingMode").none())
       // Conversions for standard LLVM builtin types
       .def("create_bitcast",
            [](TritonOpBuilder &self, Value &src, Type &dstType) -> Value {
@@ -1529,14 +1537,18 @@ void init_triton_ir(py::module_ &m) {
               EvictionPolicy evictionPolicy) -> void {
              self.create<StoreOp>(ptrs, value, cacheModifier, evictionPolicy);
            })
-      .def("create_masked_load",
-           [](TritonOpBuilder &self, Value &ptrs, Value &mask,
-              std::optional<Value> &other, CacheModifier cacheModifier,
-              EvictionPolicy evictionPolicy, bool isVolatile) -> Value {
-             return self.create<LoadOp>(ptrs, mask, other.value_or(Value()),
-                                        cacheModifier, evictionPolicy,
-                                        isVolatile);
-           })
+      .def(
+          "create_masked_load",
+          [](TritonOpBuilder &self, Value &ptrs, Value &mask,
+             std::optional<Value> &other, CacheModifier cacheModifier,
+             EvictionPolicy evictionPolicy, bool isVolatile) -> Value {
+            return self.create<LoadOp>(ptrs, mask, other.value_or(Value()),
+                                       cacheModifier, evictionPolicy,
+                                       isVolatile);
+          },
+          py::arg("ptrs"), py::arg("mask"), py::arg("other").none(),
+          py::arg("cacheModifier"), py::arg("evictionPolicy"),
+          py::arg("isVolatile"))
       .def("create_masked_store",
            [](TritonOpBuilder &self, Value &ptrs, Value &val, Value &mask,
               CacheModifier cacheModifier,
@@ -1693,18 +1705,22 @@ void init_triton_ir(py::module_ &m) {
              return self.create<DotOp>(c.getType(), a, b, c, inputPrecision,
                                        maxNumImpreciseAcc);
            })
-      .def("create_dot_scaled",
-           [](TritonOpBuilder &self, mlir::Value &lhs,
-              std::optional<mlir::Value> &lhs_scale,
-              ScaleDotElemType lhs_format, mlir::Value &rhs,
-              std::optional<mlir::Value> &rhs_scale,
-              ScaleDotElemType rhs_format, bool fast_math, bool lhs_k_pack,
-              bool rhs_k_pack, mlir::Value &c) -> mlir::Value {
-             return self.create<DotScaledOp>(
-                 c.getType(), lhs, rhs, c, lhs_scale.value_or(Value()),
-                 rhs_scale.value_or(Value()), lhs_format, rhs_format, fast_math,
-                 lhs_k_pack, rhs_k_pack);
-           })
+      .def(
+          "create_dot_scaled",
+          [](TritonOpBuilder &self, mlir::Value &lhs,
+             std::optional<mlir::Value> &lhs_scale, ScaleDotElemType lhs_format,
+             mlir::Value &rhs, std::optional<mlir::Value> &rhs_scale,
+             ScaleDotElemType rhs_format, bool fast_math, bool lhs_k_pack,
+             bool rhs_k_pack, mlir::Value &c) -> mlir::Value {
+            return self.create<DotScaledOp>(
+                c.getType(), lhs, rhs, c, lhs_scale.value_or(Value()),
+                rhs_scale.value_or(Value()), lhs_format, rhs_format, fast_math,
+                lhs_k_pack, rhs_k_pack);
+          },
+          py::arg("lhs"), py::arg("lhs_scale").none(), py::arg("lhs_format"),
+          py::arg("rhs"), py::arg("rhs_scale").none(), py::arg("rhs_format"),
+          py::arg("fast_math"), py::arg("lhs_k_pack"), py::arg("rhs_k_pack"),
+          py::arg("c"))
       .def("create_floor",
            [](TritonOpBuilder &self, Value &val) -> Value {
              return self.create<math::FloorOp>(val);
@@ -1835,23 +1851,25 @@ void init_triton_ir(py::module_ &m) {
            [](TritonOpBuilder &self, Type &type) -> Value {
              return self.create<ub::PoisonOp>(type);
            })
-      .def("create_histogram",
-           [](TritonOpBuilder &self, Value operand, int numBins,
-              std::optional<Value> mask) -> Value {
-             if (!mask) {
-               return self.create<HistogramOp>(
-                   RankedTensorType::get(
-                       {static_cast<int64_t>(numBins)},
-                       IntegerType::get(operand.getContext(), 32)),
-                   operand);
-             } else {
-               return self.create<HistogramOp>(
-                   RankedTensorType::get(
-                       {static_cast<int64_t>(numBins)},
-                       IntegerType::get(operand.getContext(), 32)),
-                   operand, *mask);
-             }
-           })
+      .def(
+          "create_histogram",
+          [](TritonOpBuilder &self, Value operand, int numBins,
+             std::optional<Value> mask) -> Value {
+            if (!mask) {
+              return self.create<HistogramOp>(
+                  RankedTensorType::get(
+                      {static_cast<int64_t>(numBins)},
+                      IntegerType::get(operand.getContext(), 32)),
+                  operand);
+            } else {
+              return self.create<HistogramOp>(
+                  RankedTensorType::get(
+                      {static_cast<int64_t>(numBins)},
+                      IntegerType::get(operand.getContext(), 32)),
+                  operand, *mask);
+            }
+          },
+          py::arg("operand"), py::arg("numBins"), py::arg("mask").none())
       .def("create_gather",
            [](TritonOpBuilder &self, Value src, Value indices, int axis)
                -> Value { return self.create<GatherOp>(src, indices, axis); })

@@ -116,7 +116,7 @@ void init_linear_layout(py::module_ &m) {
             return LinearLayout(convertedBases, convertedNames);
           },
           py::arg("bases"), py::arg("out_dim_names"),
-          py::arg("out_dim_sizes") = py::none(),
+          (py::arg("out_dim_sizes").none() = py::none()),
           py::arg("require_surjective") = true)
       .def("compose", &LinearLayout::compose)
       .def("invert_and_compose", &LinearLayout::invertAndCompose)

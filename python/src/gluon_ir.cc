@@ -625,20 +625,22 @@ void init_gluon_ir(py::module_ &m) {
              auto dstTy = cast<RankedTensorType>(resultTy);
              return isConvertLayoutTrivial(dstTy, value);
            })
-      .def("create_histogram",
-           [](GluonOpBuilder &self, Value operand, int numBins,
-              std::optional<Value> mask, Attribute layout) -> Value {
-             auto *ctx = self.getContext();
-             auto resultTy =
-                 RankedTensorType::get({static_cast<int64_t>(numBins)},
-                                       IntegerType::get(ctx, 32), layout);
-             if (!mask) {
-               return self.create<triton::HistogramOp>(resultTy, operand);
-             } else {
-               return self.create<triton::HistogramOp>(resultTy, operand,
-                                                       *mask);
-             }
-           })
+      .def(
+          "create_histogram",
+          [](GluonOpBuilder &self, Value operand, int numBins,
+             std::optional<Value> mask, Attribute layout) -> Value {
+            auto *ctx = self.getContext();
+            auto resultTy =
+                RankedTensorType::get({static_cast<int64_t>(numBins)},
+                                      IntegerType::get(ctx, 32), layout);
+            if (!mask) {
+              return self.create<triton::HistogramOp>(resultTy, operand);
+            } else {
+              return self.create<triton::HistogramOp>(resultTy, operand, *mask);
+            }
+          },
+          py::arg("operand"), py::arg("numBins"), py::arg("mask").none(),
+          py::arg("layout"))
       .def("create_cat",
            [](GluonOpBuilder &self, Value &lhs, Value &rhs,
               Type retType) -> Value {
@@ -718,13 +720,15 @@ void init_gluon_ir(py::module_ &m) {
              self.create<ttg::LocalScatterOp>(memDesc, values, indices,
                                               axisAttr);
            })
-      .def("create_local_atomic_scatter_rmw",
-           [](GluonOpBuilder &self, tt::RMWOp rmwOp, Value memDesc,
-              Value values, Value indices, std::optional<Value> mask,
-              int32_t axis) -> Value {
-             return self.create<ttg::LocalAtomicScatterRMWOp>(
-                 rmwOp, memDesc, values, indices, mask.value_or(Value()), axis);
-           })
+      .def(
+          "create_local_atomic_scatter_rmw",
+          [](GluonOpBuilder &self, tt::RMWOp rmwOp, Value memDesc, Value values,
+             Value indices, std::optional<Value> mask, int32_t axis) -> Value {
+            return self.create<ttg::LocalAtomicScatterRMWOp>(
+                rmwOp, memDesc, values, indices, mask.value_or(Value()), axis);
+          },
+          py::arg("rmwOp"), py::arg("memDesc"), py::arg("values"),
+          py::arg("indices"), py::arg("mask").none(), py::arg("axis"))
       .def("get_shared_bank_conflicts",
            [](GluonOpBuilder &self, Attribute regLayoutAttr,
               Attribute sharedLayoutAttr, std::vector<int64_t> &shape,
@@ -824,12 +828,14 @@ void init_gluon_ir(py::module_ &m) {
              llvm::append_range(results, wait.getResults());
              return results;
            })
-      .def("create_tmem_alloc",
-           [](GluonOpBuilder &self, Type resultTy,
-              std::optional<Value> value) -> Value {
-             return self.create<ttng::TMEMAllocOp>(resultTy,
-                                                   value.value_or(Value{}));
-           })
+      .def(
+          "create_tmem_alloc",
+          [](GluonOpBuilder &self, Type resultTy,
+             std::optional<Value> value) -> Value {
+            return self.create<ttng::TMEMAllocOp>(resultTy,
+                                                  value.value_or(Value{}));
+          },
+          py::arg("resultTy"), py::arg("value").none())
       .def("create_tmem_store",
            [](GluonOpBuilder &self, Value memDesc, Value value, Value pred) {
              self.create<ttng::TMEMStoreOp>(memDesc, value, pred);
@@ -867,7 +873,7 @@ void init_gluon_ir(py::module_ &m) {
             return py::cast(result);
           },
           py::arg("resultTy"), py::arg("memDesc"),
-          py::arg("redOp") = py::none(), py::arg("useAbs") = false,
+          (py::arg("redOp").none() = py::none()), py::arg("useAbs") = false,
           py::arg("propagateNan") = tt::PropagateNan::NONE)
       .def("create_tmem_copy",
            [](GluonOpBuilder &self, Value src, Value dst) {
@@ -973,7 +979,10 @@ void init_gluon_ir(py::module_ &m) {
                 offsets.has_value() ? ValueRange(*offsets) : ValueRange{};
             self.create<ttng::AsyncTMACopyGlobalToLocalOp>(
                 descPtr, coord, offsetsRange, barrier, result, pred, multicast);
-          })
+          },
+          py::arg("descPtr"), py::arg("coord"), py::arg("barrier"),
+          py::arg("result"), py::arg("pred"), py::arg("multicast"),
+          py::arg("offsets").none())
       .def("create_async_tma_copy_local_to_global",
            [](GluonOpBuilder &self, Value descPtr, std::vector<Value> &coord,
               Value src) {
