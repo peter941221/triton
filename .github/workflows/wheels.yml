@@ -12,6 +12,7 @@ permissions: read-all
 jobs:
 
   Build-Wheels:
+    if: ${{ github.repository == 'triton-lang/triton' }}
     timeout-minutes: 180
     runs-on: ${{ matrix.config.runs_on }}
 
@@ -102,9 +103,8 @@ jobs:
             export CIBW_MANYLINUX_AARCH64_IMAGE="quay.io/pypa/manylinux_2_28_${{ matrix.config.arch }}:latest"
           fi
 
-          export CIBW_BUILD="cp3{10,11,12,13,13t,14,14t}-manylinux_${{ matrix.config.arch }}"
+          export CIBW_BUILD="cp3{10,11,12,13,14,14t}-manylinux_${{ matrix.config.arch }}"
           export CIBW_SKIP="cp{35,36,37,38,39}-*"
-          export CIBW_ENABLE=cpython-freethreading
           python3 -m cibuildwheel . --output-dir wheelhouse
 
       - uses: actions/upload-artifact@v7
@@ -113,12 +113,12 @@ jobs:
           path: ./wheelhouse/*.whl
 
       - name: Install Azure CLI
-        if: ${{ steps.check-version.outputs.new_commit == 'true' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
+        if: ${{ github.repository == 'triton-lang/triton' && steps.check-version.outputs.new_commit == 'true' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
         run: |
           curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
 
       - name: Azure login
-        if: ${{ steps.check-version.outputs.new_commit == 'true' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
+        if: ${{ github.repository == 'triton-lang/triton' && steps.check-version.outputs.new_commit == 'true' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -127,21 +127,21 @@ jobs:
 
       - id: generate-token
         name: Generate token
-        if: ${{ steps.check-version.outputs.new_commit == 'true' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
+        if: ${{ github.repository == 'triton-lang/triton' && steps.check-version.outputs.new_commit == 'true' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
         run: |
           AZ_TOKEN=$(az account get-access-token --query accessToken)
           echo "::add-mask::$AZ_TOKEN"
           echo "access_token=$AZ_TOKEN" >> "$GITHUB_OUTPUT"
 
       - name: Publish wheels to Azure DevOps
-        if: ${{ steps.check-version.outputs.new_commit == 'true' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
+        if: ${{ github.repository == 'triton-lang/triton' && steps.check-version.outputs.new_commit == 'true' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
         run: |
           python3 -m pip install twine
           python3 -m twine upload -r Triton-Nightly -u TritonArtifactsSP -p ${{ steps.generate-token.outputs.access_token }} --config-file utils/nightly.pypirc --non-interactive --verbose wheelhouse/*
 
       - name: Azure Logout
-        if: ${{ steps.check-version.outputs.new_commit == 'true' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && (success() || failure()) }}
+        if: ${{ github.repository == 'triton-lang/triton' && steps.check-version.outputs.new_commit == 'true' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && (success() || failure()) }}
         run: |
-          az logout
-          az cache purge
-          az account clear
+          az logout || true
+          az cache purge || true
+          az account clear || true
