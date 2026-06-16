@@ -105,7 +105,9 @@ jobs:
             echo '::set-output name=matrix-AMD::[["self-hosted", "gfx90a"], ["amd-gfx942"], ["amd-gfx950"]]'
             echo '::set-output name=matrix-MACOS::[["macos-latest"]]'
           else
-            echo '::set-output name=matrix-NVIDIA::[{"name":"ubuntu-latest","runner_type":"ubuntu-latest","runs_on":"ubuntu-latest"}]'
-            echo '::set-output name=matrix-AMD::["ubuntu-latest"]'
+            # Forks do not have the upstream GPU/self-hosted runner contract.
+            # Leave these matrices empty so CI skips impossible jobs cleanly.
+            echo '::set-output name=matrix-NVIDIA::'
+            echo '::set-output name=matrix-AMD::'
             echo '::set-output name=matrix-MACOS::[["macos-latest"]]'
           fi
